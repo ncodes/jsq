@@ -30,7 +30,7 @@ var (
 		"$gt",  // greater than
 		"$gte", // greater than or equal
 		"$lt",  // less than
-		"$lte", //less than or equal
+		"$lte", // less than or equal
 		"$ne",  // not equal
 		"$in",  // in array
 		"$nin", // not in array
@@ -61,6 +61,7 @@ type JSQ struct {
 	session *xorm.Session
 	b       *Builder
 	table   interface{}
+	plural  bool
 }
 
 // NewJSQ connects to the database server and returns a new instance
@@ -81,8 +82,9 @@ func (q *JSQ) Debug(debug bool) {
 }
 
 // SetTable sets the table to JSQ
-func (q *JSQ) SetTable(table interface{}) {
+func (q *JSQ) SetTable(table interface{}, plural bool) {
 	q.table = table
+	q.plural = plural
 }
 
 // Parse prepares the JSQ instance to run the json JSQ by creating a new db scope
@@ -176,7 +178,7 @@ func (q *JSQ) parse(JSQ map[string]interface{}) error {
 
 				// ensure the field name is valid
 				if !q.isValidField(field) {
-					return fmt.Errorf("unknown JSQ field: %s", field)
+					return fmt.Errorf("unknown query field: %s", field)
 				}
 
 				// non-operator field can only have string, number of map value type
@@ -398,7 +400,7 @@ func (q *JSQ) parse(JSQ map[string]interface{}) error {
 				}
 
 				// add conditions to main or context builder
-				q.getBuilder(ctx).And(Or(conditions...))
+				q.getBuilder(ctx).And(And(conditions...))
 			}
 		}
 		return nil
@@ -458,7 +460,7 @@ func (q *JSQ) validateCompareOperators(v interface{}) error {
 // isEmptyBuilder checks whether the builder is empty.
 // A builder with no condition will be empty
 func (q *JSQ) isEmptyBuilder() bool {
-	return reflect.DeepEqual(q.b, new(Builder))
+	return q.b == nil || reflect.DeepEqual(q.b, new(Builder))
 }
 
 // getSQL gets SQL from the builder
@@ -475,49 +477,12 @@ func (q *JSQ) getSQL() (string, []interface{}, error) {
 	return stmt, args, err
 }
 
-// First returns the first record matching the parsed JSQ.
-// An order by `timestamp ASC` is included.
-func (q *JSQ) First(out interface{}, ops ...QueryOption) (err error) {
-	stmt, args, err := q.getSQL()
-	if err != nil {
-		return err
-	}
-	found, err := q.session.
-		Table(getTableName(q.table)).
-		Where(stmt, args...).
-		OrderBy("timestamp ASC").
-		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
-		Limit(1).
-		Get(out)
-	if !found {
-		err = ErrNotFound
-	}
-	return
-}
-
-// Last returns the last record matching the parsed JSQ
-// An order by `timestamp DESC` is included.
-func (q *JSQ) Last(out interface{}, ops ...QueryOption) (err error) {
-	stmt, args, err := q.getSQL()
-	if err != nil {
-		return err
-	}
-	found, err := q.session.
-		Table(getTableName(q.table)).
-		Where(stmt, args...).
-		OrderBy("timestamp DESC").
-		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
-		Limit(1).
-		Get(out)
-	if !found {
-		err = ErrNotFound
-	}
-	return
-}
-
 // getTableName similar to gorm's naming convention
-func getTableName(tbl interface{}) string {
-	return inflection.Plural(gorm.ToDBName(structs.New(tbl).Name()))
+func (q *JSQ) getTableName(tbl interface{}) string {
+	if q.plural {
+		return inflection.Plural(gorm.ToDBName(structs.New(tbl).Name()))
+	}
+	return gorm.ToDBName(structs.New(tbl).Name())
 }
 
 // getFirstQueryOpOrEmpty gets the first query option or returns a new query option
@@ -528,14 +493,14 @@ func getFirstQueryOpOrEmpty(ops []QueryOption) QueryOption {
 	return ops[0]
 }
 
-// All returns every record matching the parsed JSQ
-func (q *JSQ) All(out interface{}, ops ...QueryOption) error {
+// Find returns records matching the parsed JSQ
+func (q *JSQ) Find(out interface{}, ops ...QueryOption) error {
 	stmt, args, err := q.getSQL()
 	if err != nil {
 		return err
 	}
 	return q.session.
-		Table(getTableName(q.table)).
+		Table(q.getTableName(q.table)).
 		Where(stmt, args...).
 		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
 		Limit(getFirstQueryOpOrEmpty(ops).Limit).
@@ -549,7 +514,7 @@ func (q *JSQ) Count() (count int64, err error) {
 		return 0, err
 	}
 	count, err = q.session.
-		Table(getTableName(q.table)).
+		Table(q.getTableName(q.table)).
 		Where(stmt, args...).
 		Count(nil)
 	return

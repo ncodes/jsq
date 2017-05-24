@@ -7,16 +7,10 @@ type QueryMaker interface {
 	Parse(jsonQuery string) error
 
 	// Set the table to query
-	SetTable(table interface{})
+	SetTable(table interface{}, plural bool)
 
-	// First returns the first record matching the prepared query
-	First(out interface{}, op ...QueryOption) error
-
-	// Last returns the last record matching the prepared query
-	Last(out interface{}, op ...QueryOption) error
-
-	// All returns all the records matching the prepared query
-	All(out interface{}, op ...QueryOption) error
+	// Find the records matching the prepared query
+	Find(out interface{}, op ...QueryOption) error
 
 	// Count counts the number of records matching the prepared query
 	Count() (int64, error)
