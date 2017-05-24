@@ -18,10 +18,10 @@ type Person struct {
 
 jsq, err := NewJSQ("postgres", "ostgresql:-root@localhost:26257/mydb?sslmode=disable")
 
-- Set the table to work on
+// Set the table to work on
 jsq.SetTable(Person{}, false)
 
-- Parse a query
+// Parse a query
 err := jsq.Parse(`{
     "name": { 
         "$eq": "ben" 
@@ -31,7 +31,7 @@ if err != nil {
     log.Fatalf("failed to parse: %s", err)
 }
 
-- Perform query
+// Perform query
 var r []Person
 err = jsq.Find(&r)
 if err != nil {
