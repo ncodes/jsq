@@ -19,5 +19,5 @@ type QueryMaker interface {
 	All(out interface{}, op ...QueryOption) error
 
 	// Count counts the number of records matching the prepared query
-	Count(out interface{}) error
+	Count() (int64, error)
 }

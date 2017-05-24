@@ -11,6 +11,8 @@ import (
 	. "github.com/go-xorm/builder"
 	"github.com/go-xorm/xorm"
 	"github.com/iancoleman/strcase"
+	"github.com/jinzhu/gorm"
+	"github.com/jinzhu/inflection"
 )
 
 var (
@@ -49,8 +51,7 @@ type parserCtx struct {
 // alter a query
 type QueryOption struct {
 	OrderBy string
-	Limit   int64
-	Offset  int64
+	Limit   int
 }
 
 // JSQ defines a structure for constructing a query
@@ -454,46 +455,102 @@ func (q *JSQ) validateCompareOperators(v interface{}) error {
 	return nil
 }
 
-// First returns the first record matching the parsed JSQ
-func (q *JSQ) First(out interface{}, op ...QueryOption) error {
-	found, err := q.session.Limit(1).Get(out)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// Last returns the last record matching the parsed JSQ
-func (q *JSQ) Last(out interface{}, op ...QueryOption) error {
-	// return q.db.Last(out).Error
-	return nil
-}
-
 // isEmptyBuilder checks whether the builder is empty.
 // A builder with no condition will be empty
 func (q *JSQ) isEmptyBuilder() bool {
 	return reflect.DeepEqual(q.b, new(Builder))
 }
 
-// All returns all the records matching the parsed JSQ
-func (q *JSQ) All(out interface{}, op ...QueryOption) error {
+// getSQL gets SQL from the builder
+func (q *JSQ) getSQL() (string, []interface{}, error) {
 	var err error
 	var stmt string
 	var args []interface{}
 	if !q.isEmptyBuilder() {
 		stmt, args, err = q.b.ToSQL()
 		if err != nil {
-			return err
+			return "", nil, err
 		}
 	}
-	return q.session.Table("objects").Where(stmt, args...).Find(out)
+	return stmt, args, err
+}
+
+// First returns the first record matching the parsed JSQ.
+// An order by `timestamp ASC` is included.
+func (q *JSQ) First(out interface{}, ops ...QueryOption) (err error) {
+	stmt, args, err := q.getSQL()
+	if err != nil {
+		return err
+	}
+	found, err := q.session.
+		Table(getTableName(q.table)).
+		Where(stmt, args...).
+		OrderBy("timestamp ASC").
+		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
+		Limit(1).
+		Get(out)
+	if !found {
+		err = ErrNotFound
+	}
+	return
+}
+
+// Last returns the last record matching the parsed JSQ
+// An order by `timestamp DESC` is included.
+func (q *JSQ) Last(out interface{}, ops ...QueryOption) (err error) {
+	stmt, args, err := q.getSQL()
+	if err != nil {
+		return err
+	}
+	found, err := q.session.
+		Table(getTableName(q.table)).
+		Where(stmt, args...).
+		OrderBy("timestamp DESC").
+		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
+		Limit(1).
+		Get(out)
+	if !found {
+		err = ErrNotFound
+	}
+	return
+}
+
+// getTableName similar to gorm's naming convention
+func getTableName(tbl interface{}) string {
+	return inflection.Plural(gorm.ToDBName(structs.New(tbl).Name()))
+}
+
+// getFirstQueryOpOrEmpty gets the first query option or returns a new query option
+func getFirstQueryOpOrEmpty(ops []QueryOption) QueryOption {
+	if len(ops) == 0 {
+		return QueryOption{}
+	}
+	return ops[0]
+}
+
+// All returns every record matching the parsed JSQ
+func (q *JSQ) All(out interface{}, ops ...QueryOption) error {
+	stmt, args, err := q.getSQL()
+	if err != nil {
+		return err
+	}
+	return q.session.
+		Table(getTableName(q.table)).
+		Where(stmt, args...).
+		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
+		Limit(getFirstQueryOpOrEmpty(ops).Limit).
+		Find(out)
 }
 
 // Count counts the number of records matching the parsed JSQ
-func (q *JSQ) Count(out interface{}) error {
-	// return q.db.Count(out).Error
-	return nil
+func (q *JSQ) Count() (count int64, err error) {
+	stmt, args, err := q.getSQL()
+	if err != nil {
+		return 0, err
+	}
+	count, err = q.session.
+		Table(getTableName(q.table)).
+		Where(stmt, args...).
+		Count(nil)
+	return
 }
