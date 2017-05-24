@@ -64,6 +64,6 @@ if err != nil {
 - [Go Doc](https://godoc.org/github.com/ncodes/jsq)
 
 ### Todo:
-- More query operator
+- More query operators
 - Support joins and aggregate functions
 
