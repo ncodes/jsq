@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ellcrys/util"
 	"github.com/go-xorm/builder"
@@ -45,10 +46,11 @@ func clearTable(db *sql.DB, tables ...string) error {
 }
 
 type Person struct {
-	Name    string `json:"name" xorm:"name"`
-	Age     int    `json:"age" xorm:"age"`
-	RegNum  int64  `json:"reg_num" xorm:"reg_num"`
-	Address string `json:"address" xorm:"address"`
+	Name      string `json:"name" xorm:"name"`
+	Age       int    `json:"age" xorm:"age"`
+	RegNum    int64  `json:"reg_num" xorm:"reg_num"`
+	Address   string `json:"address" xorm:"address"`
+	Timestamp int64  `json:"timestamp" xorm:"timestamp;NULL"`
 }
 
 func TestJSQ(t *testing.T) {
@@ -478,11 +480,69 @@ func TestJSQ(t *testing.T) {
 				})
 			})
 
+			Convey("TestOptions", func() {
+
+				err := clearTable(jsq.db.DB().DB, "person")
+				So(err, ShouldBeNil)
+
+				persons := []Person{
+					Person{Name: "yen", Age: 21, RegNum: 3000, Address: "street 5", Timestamp: time.Now().UnixNano()},
+					Person{Name: "ken", Age: 20, RegNum: 12345, Address: "street 1", Timestamp: time.Now().UnixNano()},
+					Person{Name: "ben", Age: 21, RegNum: 12346, Address: "street 2", Timestamp: time.Now().UnixNano()},
+					Person{Name: "zen", Age: 22, RegNum: 12347, Address: "street 3", Timestamp: time.Now().UnixNano()},
+					Person{Name: "gen", Age: 23, RegNum: 12348, Address: "street 4", Timestamp: time.Now().UnixNano()},
+				}
+				affected, err := jsq.session.InsertMulti(&persons)
+				So(affected, ShouldEqual, 5)
+				So(err, ShouldBeNil)
+
+				Convey("Limit", func() {
+					Convey("Should return 3 persons", func() {
+						err := jsq.Parse(`{}`)
+						So(err, ShouldBeNil)
+						var r []Person
+						err = jsq.Find(&r, QueryOption{Limit: 3})
+						So(err, ShouldBeNil)
+						So(len(r), ShouldEqual, 3)
+					})
+				})
+
+				Convey("OrderBy", func() {
+					Convey("Should return 3 persons ordered by age in descending order", func() {
+						err := jsq.Parse(`{}`)
+						So(err, ShouldBeNil)
+						var r []Person
+						err = jsq.Find(&r, QueryOption{Limit: 3, OrderBy: "age desc"})
+						So(err, ShouldBeNil)
+						So(len(r), ShouldEqual, 3)
+						So(r[0], ShouldResemble, persons[4])
+						So(r[1], ShouldResemble, persons[3])
+						So(r[2], ShouldResemble, persons[0])
+					})
+
+					Convey("Should return 3 persons ordered by age in ascending order", func() {
+						err := jsq.Parse(`{}`)
+						So(err, ShouldBeNil)
+						var r []Person
+						err = jsq.Find(&r, QueryOption{Limit: 3, OrderBy: "age asc"})
+						So(err, ShouldBeNil)
+						So(len(r), ShouldEqual, 3)
+						So(r[0], ShouldResemble, persons[1])
+						So(r[1], ShouldResemble, persons[0])
+						So(r[2], ShouldResemble, persons[2])
+					})
+				})
+
+				Reset(func() {
+					err := clearTable(jsq.db.DB().DB, "person")
+					So(err, ShouldBeNil)
+				})
+			})
+
 			Reset(func() {
 				err := clearTable(jsq.db.DB().DB, "person")
 				So(err, ShouldBeNil)
 			})
 		})
-
 	})
 }
