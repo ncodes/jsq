@@ -6,6 +6,8 @@ import (
 
 	"reflect"
 
+	"database/sql"
+
 	"github.com/ellcrys/util"
 	"github.com/fatih/structs"
 	. "github.com/go-xorm/builder"
@@ -17,6 +19,9 @@ import (
 
 // Query defines an interface for JSQL query implementations
 type Query interface {
+
+	// SetDB overwrites the underlying db instance
+	SetDB(db interface{}) error
 
 	// Parse builds the query
 	Parse(jsonQuery string) error
@@ -90,6 +95,21 @@ func NewJSQ(driverName, connStr string) (*JSQ, error) {
 		db:      db,
 		session: db.NewSession(),
 	}, nil
+}
+
+// SetDB replaces the underlying sql.DB instance
+func (q *JSQ) SetDB(db interface{}) error {
+	if _db, ok := db.(*sql.DB); ok {
+		if q.db != nil {
+			q.db.DB().DB = _db
+		}
+		if q.session != nil {
+			q.session.DB().DB = _db
+			q.db.NewSession()
+		}
+		return nil
+	}
+	return fmt.Errorf("unexpected db type. expected *sql.DB")
 }
 
 // Debug causes sql to be logged

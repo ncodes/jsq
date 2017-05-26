@@ -68,6 +68,27 @@ func TestJSQ(t *testing.T) {
 	jsq.SetTable(Person{}, false)
 
 	Convey("JSQ", t, func() {
+
+		Convey(".SetDB", func() {
+
+			jsq2, err := NewJSQ("postgres", conStrWithDB)
+			if err != nil {
+				t.Fatalf("failed to connect to database. %s", err)
+			}
+
+			Convey("Should fail if type is not *sql.DB", func() {
+				err := jsq2.SetDB("")
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldEqual, "unexpected db type. expected *sql.DB")
+			})
+
+			Convey("Should successfully change DB", func() {
+				err := jsq2.SetDB(testDB)
+				So(err, ShouldBeNil)
+				So(jsq2.db.DB().DB, ShouldResemble, testDB)
+			})
+		})
+
 		Convey(".Parse", func() {
 			Convey("Should return error if json is malformed", func() {
 				json := `{""}`
