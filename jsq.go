@@ -97,19 +97,23 @@ func NewJSQ(driverName, connStr string) (*JSQ, error) {
 	}, nil
 }
 
-// SetDB replaces the underlying sql.DB instance
+// SetDB replaces the underlying sql.DB for the session.
+// If db is *sql.DB, the sessions underlying db is set or
+// if it is *sql.Tx, the sessions transaction is set
 func (q *JSQ) SetDB(db interface{}) error {
-	if _db, ok := db.(*sql.DB); ok {
-		if q.db != nil {
-			q.db.DB().DB = _db
-		}
+	switch _db := db.(type) {
+	case *sql.DB:
 		if q.session != nil {
 			q.session.DB().DB = _db
-			q.db.NewSession()
 		}
-		return nil
+	case *sql.Tx:
+		if q.session != nil {
+			q.session.Tx.Tx = _db
+		}
+	default:
+		return fmt.Errorf("unexpected db type. expected *sql.DB or *sql.Tx")
 	}
-	return fmt.Errorf("unexpected db type. expected *sql.DB")
+	return nil
 }
 
 // Debug causes sql to be logged

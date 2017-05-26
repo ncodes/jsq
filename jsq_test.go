@@ -79,7 +79,7 @@ func TestJSQ(t *testing.T) {
 			Convey("Should fail if type is not *sql.DB", func() {
 				err := jsq2.SetDB("")
 				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "unexpected db type. expected *sql.DB")
+				So(err.Error(), ShouldEqual, "unexpected db type. expected *sql.DB or *sql.Tx")
 			})
 
 			Convey("Should successfully change DB", func() {
