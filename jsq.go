@@ -16,9 +16,6 @@ type Query interface {
 	// Parse builds the query
 	Parse(jsonQuery string) error
 
-	// Set the table to query
-	SetTable(table interface{}, plural bool)
-
 	// ToSQL generates and returns the built SQL and arguments
 	ToSQL() (string, []interface{}, error)
 }
