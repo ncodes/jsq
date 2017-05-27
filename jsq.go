@@ -6,22 +6,12 @@ import (
 
 	"reflect"
 
-	"database/sql"
-
 	"github.com/ellcrys/util"
-	"github.com/fatih/structs"
 	. "github.com/go-xorm/builder"
-	"github.com/go-xorm/xorm"
-	"github.com/iancoleman/strcase"
-	"github.com/jinzhu/gorm"
-	"github.com/jinzhu/inflection"
 )
 
 // Query defines an interface for JSQL query implementations
 type Query interface {
-
-	// SetDB overwrites the underlying db instance
-	SetDB(db interface{}) error
 
 	// Parse builds the query
 	Parse(jsonQuery string) error
@@ -29,11 +19,7 @@ type Query interface {
 	// Set the table to query
 	SetTable(table interface{}, plural bool)
 
-	// Find the records matching the prepared query
-	Find(out interface{}, op ...QueryOption) error
-
-	// Count counts the number of records matching the prepared query
-	Count() (int64, error)
+	ToSQL() (string, []interface{}, error)
 }
 
 var (
@@ -78,64 +64,23 @@ type QueryOption struct {
 // JSQ defines a structure for constructing a query
 // from json objects.
 type JSQ struct {
-	db      *xorm.Engine
-	session *xorm.Session
-	b       *Builder
-	table   interface{}
-	plural  bool
+	b *Builder
+
+	// fieldWhitelist holds a list of valid field names
+	fieldWhitelist []string
 }
 
 // NewJSQ connects to the database server and returns a new instance
-func NewJSQ(driverName, connStr string) (*JSQ, error) {
-	db, err := xorm.NewEngine(driverName, connStr)
-	if err != nil {
-		return nil, err
-	}
+func NewJSQ(fieldWhitelist []string) *JSQ {
 	return &JSQ{
-		db:      db,
-		session: db.NewSession(),
-	}, nil
-}
-
-// SetDB replaces the underlying sql.DB for the session.
-// If db is *sql.DB, the sessions underlying db is set or
-// if it is *sql.Tx, the sessions transaction is set
-func (q *JSQ) SetDB(db interface{}) error {
-	switch _db := db.(type) {
-	case *sql.DB:
-		if q.session != nil {
-			q.session.DB().DB = _db
-		}
-	case *sql.Tx:
-		if q.session != nil {
-			q.session.Tx.Tx = _db
-		}
-	default:
-		return fmt.Errorf("unexpected db type. expected *sql.DB or *sql.Tx")
+		fieldWhitelist: fieldWhitelist,
 	}
-	return nil
-}
-
-// Debug causes sql to be logged
-func (q *JSQ) Debug(debug bool) {
-	q.db.ShowSQL(debug)
-}
-
-// SetTable sets the table to JSQ
-func (q *JSQ) SetTable(table interface{}, plural bool) {
-	q.table = table
-	q.plural = plural
 }
 
 // Parse prepares the JSQ instance to run the json JSQ by creating a new db scope
 // containing all the JSQ requirements ready to be executed. It returns error
 // if unable to parse jsonJSQ
 func (q *JSQ) Parse(jsonJSQ string) error {
-
-	if q.table == nil {
-		return fmt.Errorf("table not set")
-	}
-
 	var JSQ map[string]interface{}
 	err := util.FromJSON([]byte(jsonJSQ), &JSQ)
 	if err != nil {
@@ -144,27 +89,10 @@ func (q *JSQ) Parse(jsonJSQ string) error {
 	return q.parse(JSQ)
 }
 
-// isValidField checks whether a JSQ field is known/valid
+// isValidField checks whether a JSQ field is an acceptable field.
+// If the valid fields whitelist is empty, all fields are considered valid
 func (q JSQ) isValidField(f string) bool {
-	var objectFields = structs.New(q.table).Fields()
-	var blacklistedFields = []string{"creator_id", "partition_id", "JSQ_params", "schema_version"}
-	var valid = false
-	for _, field := range objectFields {
-
-		// get field name from json tag
-		fieldName := field.Name()
-		jsonTag := strings.Split(field.Tag("json"), ",")
-		if len(jsonTag) > 0 {
-			if jsonTag[0] != "" {
-				fieldName = jsonTag[0]
-			}
-		}
-
-		if fieldName == f && !util.InStringSlice(blacklistedFields, strcase.ToSnake(f)) {
-			valid = true
-		}
-	}
-	return valid
+	return len(q.fieldWhitelist) == 0 || util.InStringSlice(q.fieldWhitelist, f)
 }
 
 // isValidOperator checks whether an operator is include
@@ -517,45 +445,10 @@ func (q *JSQ) getSQL() (string, []interface{}, error) {
 	return stmt, args, err
 }
 
-// getTableName similar to gorm's naming convention
-func (q *JSQ) getTableName(tbl interface{}) string {
-	if q.plural {
-		return inflection.Plural(gorm.ToDBName(structs.New(tbl).Name()))
+// ToSQL returns the generated SQL and arguments
+func (q *JSQ) ToSQL() (string, []interface{}, error) {
+	if q.isEmptyBuilder() {
+		return "", nil, nil
 	}
-	return gorm.ToDBName(structs.New(tbl).Name())
-}
-
-// getFirstQueryOpOrEmpty gets the first query option or returns a new query option
-func getFirstQueryOpOrEmpty(ops []QueryOption) QueryOption {
-	if len(ops) == 0 {
-		return QueryOption{}
-	}
-	return ops[0]
-}
-
-// Find returns records matching the parsed JSQ
-func (q *JSQ) Find(out interface{}, ops ...QueryOption) error {
-	stmt, args, err := q.getSQL()
-	if err != nil {
-		return err
-	}
-	return q.session.
-		Table(q.getTableName(q.table)).
-		Where(stmt, args...).
-		OrderBy(getFirstQueryOpOrEmpty(ops).OrderBy).
-		Limit(getFirstQueryOpOrEmpty(ops).Limit).
-		Find(out)
-}
-
-// Count counts the number of records matching the parsed JSQ
-func (q *JSQ) Count() (count int64, err error) {
-	stmt, args, err := q.getSQL()
-	if err != nil {
-		return 0, err
-	}
-	count, err = q.session.
-		Table(q.getTableName(q.table)).
-		Where(stmt, args...).
-		Count(nil)
-	return
+	return q.b.ToSQL()
 }

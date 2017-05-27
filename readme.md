@@ -9,17 +9,12 @@ go get github.com/ncodes/jsq
 ### Example
 
 ```go
-type Person struct {
-    Name    string `json:"name" xorm:"name"`
-    Age     int    `json:"age" xorm:"age"`
-    RegNum  int64  `json:"reg_num" xorm:"reg_num"`
-    Address string `json:"address" xorm:"address"`
-}
 
-jsq, err := NewJSQ("postgres", "ostgresql:-root@localhost:26257/mydb?sslmode=disable")
-
-// Set the table to work on
-jsq.SetTable(Person{}, false)
+jsq, err := NewJSQ([]string{
+    "valid_field_1",
+    "name",
+    "age",
+})
 
 // Parse a query
 err := jsq.Parse(`{
@@ -31,12 +26,8 @@ if err != nil {
     log.Fatalf("failed to parse: %s", err)
 }
 
-// Perform query
-var r []Person
-err = jsq.Find(&r)
-if err != nil {
-    log.Fatalf("failed to query: %s", err)
-}
+// Get SQL 
+sql, args, err := jsq.ToSQL()
 ```
 
 #### Supported Compare Operators

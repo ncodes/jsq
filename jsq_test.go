@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ellcrys/util"
 	"github.com/go-xorm/builder"
+	"github.com/go-xorm/xorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -59,35 +59,16 @@ func TestJSQ(t *testing.T) {
 	}
 	defer dropDB(t)
 
-	jsq, err := NewJSQ("postgres", conStrWithDB)
+	engine, err := xorm.NewEngine("postgres", conStrWithDB)
 	if err != nil {
 		t.Fatalf("failed to connect to database. %s", err)
 	}
 
-	jsq.db.CreateTables(Person{})
-	jsq.SetTable(Person{}, false)
+	jsq := NewJSQ(nil)
+
+	engine.CreateTables(Person{})
 
 	Convey("JSQ", t, func() {
-
-		Convey(".SetDB", func() {
-
-			jsq2, err := NewJSQ("postgres", conStrWithDB)
-			if err != nil {
-				t.Fatalf("failed to connect to database. %s", err)
-			}
-
-			Convey("Should fail if type is not *sql.DB", func() {
-				err := jsq2.SetDB("")
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "unexpected db type. expected *sql.DB or *sql.Tx")
-			})
-
-			Convey("Should successfully change DB", func() {
-				err := jsq2.SetDB(testDB)
-				So(err, ShouldBeNil)
-				So(jsq2.db.DB().DB, ShouldResemble, testDB)
-			})
-		})
 
 		Convey(".Parse", func() {
 			Convey("Should return error if json is malformed", func() {
@@ -99,11 +80,16 @@ func TestJSQ(t *testing.T) {
 		})
 
 		Convey(".isValidField", func() {
-			So(jsq.isValidField("name"), ShouldEqual, true)
-			So(jsq.isValidField("age"), ShouldEqual, true)
-			So(jsq.isValidField("reg_num"), ShouldEqual, true)
-			So(jsq.isValidField("address"), ShouldEqual, true)
-			So(jsq.isValidField("unknown"), ShouldEqual, false)
+			Convey("when no field is whitelisted, all fields are allowed", func() {
+				So(jsq.isValidField("name"), ShouldEqual, true)
+				So(jsq.isValidField("unknown"), ShouldEqual, true)
+			})
+
+			Convey("when fields are whitelisted, unknown fields are invalid", func() {
+				jsq := NewJSQ([]string{"name"})
+				So(jsq.isValidField("name"), ShouldEqual, true)
+				So(jsq.isValidField("unknown"), ShouldEqual, false)
+			})
 		})
 
 		Convey(".isValidOperator", func() {
@@ -142,15 +128,15 @@ func TestJSQ(t *testing.T) {
 			jsq.b = &builder.Builder{}
 		})
 
-		Convey(".All", func() {
+		Convey("Test with samples", func() {
 
-			persons := []Person{
+			persons := []interface{}{
 				Person{Name: "ken", Age: 20, RegNum: 12345, Address: "street 1"},
 				Person{Name: "ben", Age: 21, RegNum: 12346, Address: "street 2"},
 				Person{Name: "zen", Age: 22, RegNum: 12347, Address: "street 3"},
 				Person{Name: "gen", Age: 23, RegNum: 12348, Address: "street 4"},
 			}
-			affected, err := jsq.session.InsertMulti(&persons)
+			affected, err := engine.Insert(persons...)
 			So(affected, ShouldEqual, 4)
 			So(err, ShouldBeNil)
 
@@ -158,17 +144,21 @@ func TestJSQ(t *testing.T) {
 				err := jsq.Parse(`{}`)
 				So(err, ShouldBeNil)
 				var r []Person
-				err = jsq.Find(&r)
+				sql, args, err := jsq.ToSQL()
+				So(err, ShouldBeNil)
+				err = engine.Table(Person{}).Where(sql, args).Find(&r)
 				So(err, ShouldBeNil)
 				So(len(r), ShouldEqual, 4)
 			})
 
 			Convey("equality ($eq)", func() {
-				Convey("Should all all persons with name=ben without the $eq operator", func() {
+				Convey("Should get all persons with name=ben without the $eq operator", func() {
 					err := jsq.Parse(`{"name": "ben"}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 1)
 					So(r[0], ShouldResemble, persons[1])
@@ -178,14 +168,16 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"name": { "$eq": "ben" }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 1)
 					So(r[0], ShouldResemble, persons[1])
 				})
 
 				Reset(func() {
-					err := clearTable(jsq.db.DB().DB, "person")
+					err := clearTable(engine.DB().DB, "person")
 					So(err, ShouldBeNil)
 				})
 			})
@@ -195,7 +187,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$gt": 21 }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 2)
 					So(r[0], ShouldResemble, persons[2])
@@ -208,7 +202,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$gte": 21 }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 3)
 					So(r[0], ShouldResemble, persons[1])
@@ -222,7 +218,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$lt": 21 }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 1)
 					So(r[0], ShouldResemble, persons[0])
@@ -234,7 +232,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$lte": 21 }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 2)
 					So(r[0], ShouldResemble, persons[0])
@@ -247,7 +247,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$ne": 21 }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 3)
 					So(r, ShouldNotContain, persons[1])
@@ -259,7 +261,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$in": [21, 23] }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 2)
 					So(r, ShouldContain, persons[1])
@@ -272,7 +276,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"age": { "$nin": [21, 23] }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 2)
 					So(r, ShouldNotContain, persons[1])
@@ -283,9 +289,9 @@ func TestJSQ(t *testing.T) {
 			Convey("$not", func() {
 
 				Convey("Should return error when used as a top level operator", func() {
-					err := jsq.Parse(`{"not": { }}`)
+					err := jsq.Parse(`{"$not": { }}`)
 					So(err, ShouldNotBeNil)
-					So(err.Error(), ShouldEqual, "unknown query field: not")
+					So(err.Error(), ShouldEqual, "unknown top level operator: $not")
 				})
 
 				Convey("Should return error when assigned a value that is not a map type", func() {
@@ -294,18 +300,20 @@ func TestJSQ(t *testing.T) {
 					So(err.Error(), ShouldEqual, "field 'name': '$not' operator supports only map type")
 				})
 
-				Convey("Should return all persons that with name not equal to ben", func() {
+				Convey("Should return all persons with name not equal to ben", func() {
 					err := jsq.Parse(`{"name": { "$not": { "$eq": "ben" }}}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 3)
 					So(r, ShouldNotContain, persons[1])
 				})
 
 				Reset(func() {
-					err := clearTable(jsq.db.DB().DB, "person")
+					err := clearTable(engine.DB().DB, "person")
 					So(err, ShouldBeNil)
 				})
 			})
@@ -315,7 +323,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"name": { "$sw": "be" }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 1)
 					So(r, ShouldContain, persons[1])
@@ -327,7 +337,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"name": { "$ew": "en" }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 4)
 				})
@@ -338,7 +350,9 @@ func TestJSQ(t *testing.T) {
 					err := jsq.Parse(`{"address": { "$ct": "reet" }}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 4)
 				})
@@ -346,29 +360,31 @@ func TestJSQ(t *testing.T) {
 
 			Convey("Complex queries", func() {
 
-				err := clearTable(jsq.db.DB().DB, "person")
+				err := clearTable(engine.DB().DB, "person")
 				So(err, ShouldBeNil)
 
-				persons := []Person{
+				persons := []interface{}{
 					Person{Name: "ben", Age: 21, RegNum: 3000, Address: "street 2"},
 					Person{Name: "ken", Age: 20, RegNum: 12345, Address: "street 1"},
 					Person{Name: "ben", Age: 21, RegNum: 12346, Address: "street 2"},
 					Person{Name: "zen", Age: 22, RegNum: 12347, Address: "street 3"},
 					Person{Name: "gen", Age: 23, RegNum: 12348, Address: "street 4"},
 				}
-				affected, err := jsq.session.InsertMulti(&persons)
+				affected, err := engine.Insert(persons...)
 				So(affected, ShouldEqual, 5)
 				So(err, ShouldBeNil)
 
 				Convey("Should get all persons name equal to ben, age equal to 21 and reg_num equal 3000", func() {
 					err := jsq.Parse(`{
-						"name": "ben",
-						"age": 21,
-						"reg_num": 3000
-					}`)
+								"name": "ben",
+								"age": 21,
+								"reg_num": 3000
+							}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 1)
 					So(r[0], ShouldResemble, persons[0])
@@ -376,13 +392,15 @@ func TestJSQ(t *testing.T) {
 
 				Convey("Should get all persons with name equal to ben, age equal to 21 and reg_num equal 3000 (use $eq operator)", func() {
 					err := jsq.Parse(`{
-						"name": { "$eq": "ben" },
-						"age": 21,
-						"reg_num": { "$eq": 3000 }
-					}`)
+								"name": { "$eq": "ben" },
+								"age": 21,
+								"reg_num": { "$eq": 3000 }
+							}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 1)
 					So(r[0], ShouldResemble, persons[0])
@@ -390,12 +408,14 @@ func TestJSQ(t *testing.T) {
 
 				Convey("Should get all persons with name not equal to ben, age not equal to 21", func() {
 					err := jsq.Parse(`{
-						"name": { "$not": { "$eq": "ben" }},
-						"age": { "$not": { "$eq": 21 }}
-					}`)
+								"name": { "$not": { "$eq": "ben" }},
+								"age": { "$not": { "$eq": 21 }}
+							}`)
 					So(err, ShouldBeNil)
 					var r []Person
-					err = jsq.Find(&r)
+					sql, args, err := jsq.ToSQL()
+					So(err, ShouldBeNil)
+					err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 					So(err, ShouldBeNil)
 					So(len(r), ShouldEqual, 3)
 					So(r, ShouldNotContain, persons[0])
@@ -404,17 +424,17 @@ func TestJSQ(t *testing.T) {
 
 				Convey("logical operators", func() {
 
-					err := clearTable(jsq.db.DB().DB, "person")
+					err := clearTable(engine.DB().DB, "person")
 					So(err, ShouldBeNil)
 
-					persons := []Person{
+					persons := []interface{}{
 						Person{Name: "ben", Age: 21, RegNum: 3000, Address: "street 2"},
 						Person{Name: "ken", Age: 20, RegNum: 12345, Address: "street 1"},
 						Person{Name: "ben", Age: 21, RegNum: 12346, Address: "street 2"},
 						Person{Name: "zen", Age: 22, RegNum: 12347, Address: "street 3"},
 						Person{Name: "gen", Age: 23, RegNum: 12348, Address: "street 4"},
 					}
-					affected, err := jsq.session.InsertMulti(&persons)
+					affected, err := engine.Insert(persons...)
 					So(affected, ShouldEqual, 5)
 					So(err, ShouldBeNil)
 
@@ -433,7 +453,9 @@ func TestJSQ(t *testing.T) {
 							}`)
 							So(err, ShouldBeNil)
 							var r []Person
-							err = jsq.Find(&r)
+							sql, args, err := jsq.ToSQL()
+							So(err, ShouldBeNil)
+							err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 							So(err, ShouldBeNil)
 							So(len(r), ShouldEqual, 2)
 							So(r, ShouldContain, persons[0])
@@ -446,7 +468,9 @@ func TestJSQ(t *testing.T) {
 							}`)
 							So(err, ShouldBeNil)
 							var r []Person
-							err = jsq.Find(&r)
+							sql, args, err := jsq.ToSQL()
+							So(err, ShouldBeNil)
+							err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 							So(err, ShouldBeNil)
 							So(len(r), ShouldEqual, 0)
 						})
@@ -467,7 +491,9 @@ func TestJSQ(t *testing.T) {
 							}`)
 							So(err, ShouldBeNil)
 							var r []Person
-							err = jsq.Find(&r)
+							sql, args, err := jsq.ToSQL()
+							So(err, ShouldBeNil)
+							err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 							So(err, ShouldBeNil)
 							So(len(r), ShouldEqual, 2)
 							So(r, ShouldContain, persons[1])
@@ -478,11 +504,13 @@ func TestJSQ(t *testing.T) {
 					Convey("$nor", func() {
 						Convey("Should get all objects with name != ken or name != ben or name != zen", func() {
 							err := jsq.Parse(`{
-								"$nor": [{ "name": "ken" }, { "name": "ben" }, { "name": "zen" }]
-							}`)
+											"$nor": [{ "name": "ken" }, { "name": "ben" }, { "name": "zen" }]
+										}`)
 							So(err, ShouldBeNil)
 							var r []Person
-							err = jsq.Find(&r)
+							sql, args, err := jsq.ToSQL()
+							So(err, ShouldBeNil)
+							err = engine.Table(Person{}).Where(sql, args...).Find(&r)
 							So(err, ShouldBeNil)
 							So(len(r), ShouldEqual, 1)
 							So(r, ShouldContain, persons[4])
@@ -490,78 +518,19 @@ func TestJSQ(t *testing.T) {
 					})
 
 					Reset(func() {
-						err := clearTable(jsq.db.DB().DB, "person")
+						err := clearTable(engine.DB().DB, "person")
 						So(err, ShouldBeNil)
 					})
 				})
 
 				Reset(func() {
-					err := clearTable(jsq.db.DB().DB, "person")
-					So(err, ShouldBeNil)
-				})
-			})
-
-			Convey("TestOptions", func() {
-
-				err := clearTable(jsq.db.DB().DB, "person")
-				So(err, ShouldBeNil)
-
-				persons := []Person{
-					Person{Name: "yen", Age: 21, RegNum: 3000, Address: "street 5", Timestamp: time.Now().UnixNano()},
-					Person{Name: "ken", Age: 20, RegNum: 12345, Address: "street 1", Timestamp: time.Now().UnixNano()},
-					Person{Name: "ben", Age: 21, RegNum: 12346, Address: "street 2", Timestamp: time.Now().UnixNano()},
-					Person{Name: "zen", Age: 22, RegNum: 12347, Address: "street 3", Timestamp: time.Now().UnixNano()},
-					Person{Name: "gen", Age: 23, RegNum: 12348, Address: "street 4", Timestamp: time.Now().UnixNano()},
-				}
-				affected, err := jsq.session.InsertMulti(&persons)
-				So(affected, ShouldEqual, 5)
-				So(err, ShouldBeNil)
-
-				Convey("Limit", func() {
-					Convey("Should return 3 persons", func() {
-						err := jsq.Parse(`{}`)
-						So(err, ShouldBeNil)
-						var r []Person
-						err = jsq.Find(&r, QueryOption{Limit: 3})
-						So(err, ShouldBeNil)
-						So(len(r), ShouldEqual, 3)
-					})
-				})
-
-				Convey("OrderBy", func() {
-					Convey("Should return 3 persons ordered by age in descending order", func() {
-						err := jsq.Parse(`{}`)
-						So(err, ShouldBeNil)
-						var r []Person
-						err = jsq.Find(&r, QueryOption{Limit: 3, OrderBy: "age desc"})
-						So(err, ShouldBeNil)
-						So(len(r), ShouldEqual, 3)
-						So(r[0], ShouldResemble, persons[4])
-						So(r[1], ShouldResemble, persons[3])
-						So(r[2], ShouldResemble, persons[0])
-					})
-
-					Convey("Should return 3 persons ordered by age in ascending order", func() {
-						err := jsq.Parse(`{}`)
-						So(err, ShouldBeNil)
-						var r []Person
-						err = jsq.Find(&r, QueryOption{Limit: 3, OrderBy: "age asc"})
-						So(err, ShouldBeNil)
-						So(len(r), ShouldEqual, 3)
-						So(r[0], ShouldResemble, persons[1])
-						So(r[1], ShouldResemble, persons[0])
-						So(r[2], ShouldResemble, persons[2])
-					})
-				})
-
-				Reset(func() {
-					err := clearTable(jsq.db.DB().DB, "person")
+					err := clearTable(engine.DB().DB, "person")
 					So(err, ShouldBeNil)
 				})
 			})
 
 			Reset(func() {
-				err := clearTable(jsq.db.DB().DB, "person")
+				err := clearTable(engine.DB().DB, "person")
 				So(err, ShouldBeNil)
 			})
 		})
